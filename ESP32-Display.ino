@@ -6,17 +6,23 @@
 #define TIMEOUT 20
 #define PROTO_1_BYTES 11
 #define PROTO_2_BYTES 8
+#define PROG_VER 0.08
+#define ACC_PIN 34
+#define MY_NAME "ESP32dsp"
 
 
 //bool start_p = false;
 byte byte_p = 0;
 byte uart_protocol = 0;
 byte packet[30] = {0};
-byte myCRC, inByte, oldByte, cmdByte = 0;
+byte inByte, oldByte, cmdByte = 0;
+uint8_t BTmac[6] = {0};
 byte r_packet[] = {0x3e, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x05};
 byte start_packet[] = {0x3e, 0x2c, 0x0b, 0x00, 0x3c, 0x28, 0x1e, 0x32, 0x46, 0x64, 0x01, 0x00, 0x00, 0x00, 0x01, 0x96};
 unsigned long loop_time;
 int16_t mk_speed, bat_current;
+uint16_t sensorValue, accValue = 0;
+char myBTName[22] = {0};
 
 boolean is_start_p = true;
 
@@ -25,13 +31,16 @@ BluetoothSerial SerialBT;
 
 void setup() {
 
+  esp_read_mac(BTmac, ESP_MAC_BT);
+  sprintf(myBTName, "%s%02X%02X%02X%02X%02X%02X", MY_NAME, BTmac[0], BTmac[1], BTmac[2], BTmac[3], BTmac[4], BTmac[5]);
+
   pinMode(LED_BUILTIN, OUTPUT);
 
   // initialize both serial ports:
   Serial.begin(115200);
   Serial.println("Start ...");
 
-  SerialBT.begin("ESP32Display"); //Bluetooth device name
+  SerialBT.begin(myBTName); //Bluetooth device name
   SerialBT.println("Start ...");
 
 
@@ -66,6 +75,12 @@ void setup() {
   Serial.println("Port 9600 8N1 RX pin 16 TX pin 17");
   SerialBT.println("Port 9600 8N1 RX pin 16 TX pin 17");
 
+  accValue = readACC();
+  if(accValue != 0) {
+      Serial.printf("Значение акселератора: %d\n", accValue);
+      Serial.println("Требуется калибровка!!!");
+  }
+
   loop_time = millis() + TIMEOUT;
   
 }
@@ -77,7 +92,6 @@ void loop() {
     inByte = mySerial.read();
 
     Serial.printf("%.2X ",inByte);
-//    SerialBT.print(inByte, HEX);
 
     if(uart_protocol != 0) {
       packet[byte_p++] = inByte;
@@ -109,8 +123,7 @@ void loop() {
     
   }
 
-  tik();
-  
+  tik();  
 
   check_serial();
 
@@ -122,7 +135,15 @@ void sendPacket() {
   if(is_start_p) {
     is_start_p = false;
     mySerial.write(start_packet,sizeof(start_packet));
-  } else mySerial.write(r_packet,sizeof(r_packet));
+  } else {
+    r_packet[4] = readACC();
+
+    int16_t myCRC = r_packet[1] + r_packet[2] + r_packet[3] + r_packet[4] + r_packet[5];
+    r_packet[6] = highByte(myCRC);
+    r_packet[7] = lowByte(myCRC);
+
+    mySerial.write(r_packet,sizeof(r_packet));
+  }
 }
 
 void protoError() {
@@ -143,17 +164,22 @@ void printPacket() {
 //  SerialBT.println("RECV PACKET: ");
   
   for ( byte element=0; element<=byte_p-1; element++) {  // printf(tmp, "0x%.2X",data[i]);
-    Serial.printf("0x%.2X ",packet[element]);
+    Serial.printf("%.2X ",packet[element]);
     SerialBT.printf("%.2X ",packet[element]);
   }
-  Serial.println();
-  SerialBT.println();
+//  Serial.println();
 
   if(checkCRC(uart_protocol)) {
     Serial.println("CRC OK");
+    SerialBT.println("OK");
     printPacketInfo(uart_protocol);
   }
-  else Serial.println("CRC BAD!");
+  else { 
+    Serial.println("CRC BAD!");
+    SerialBT.println("!CRC");
+  }
+
+  Serial.printf("SEND PACKET: %.2X %.2X %.2X %.2X %.2X %.2X %.2X %.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
 }
 
 void tik() {
@@ -169,22 +195,22 @@ void check_serial() {
   if (Serial.available()) {
     cmdByte = Serial.read();
     Serial.printf("\nGot: %.2X\n",cmdByte);
-//    Serial.print(cmdByte, HEX);
-    if(cmdByte == 'l' || cmdByte == 'L') Serial.print("Check done!!!\n");
+
+    if(cmdByte == 'v' || cmdByte == 'V') Serial.printf("Version: %F\n",PROG_VER);
     if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
     if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
     if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
 
-    if(cmdByte == 'u' || cmdByte == 'U' && (r_packet[4] <= 254)) r_packet[4]++;
-    if(cmdByte == 'd' || cmdByte == 'D' && (r_packet[4] >= 1)) r_packet[4]--;
-    if(cmdByte == '0') r_packet[4] = 0x00;  // сбрасываем газ
+//    if(cmdByte == 'u' || cmdByte == 'U' && (r_packet[4] <= 254)) r_packet[4]++;
+//    if(cmdByte == 'd' || cmdByte == 'D' && (r_packet[4] >= 1)) r_packet[4]--;
+//    if(cmdByte == '0') r_packet[4] = 0x00;  // сбрасываем газ
 
     if(cmdByte == 'a' || cmdByte == 'A' && (r_packet[5] <= 254)) r_packet[5]++;
     if(cmdByte == 'z' || cmdByte == 'Z' && (r_packet[5] >= 1)) r_packet[5]--;
-    if(cmdByte == '0') r_packet[5] = 0x00;  // сбрасываем тормоз
+    if(cmdByte == '-') r_packet[5] = 0x00;  // сбрасываем тормоз
 
     
-    uint16_t myCRC = r_packet[1] + r_packet[2] + r_packet[3] + r_packet[4] + r_packet[5];
+    int16_t myCRC = r_packet[1] + r_packet[2] + r_packet[3] + r_packet[4] + r_packet[5];
     r_packet[6] = highByte(myCRC);
     r_packet[7] = lowByte(myCRC);
   }
@@ -211,15 +237,16 @@ boolean checkCRC(byte p_ver) {
 
 void printPacketInfo(byte p_ver) {
 
+  Serial.printf("Протокол: %d\n", p_ver);
   if(p_ver == 1) {
-    mk_speed = ((packet[5]<<8)+packet[6]) - 3000;
+    mk_speed = ((packet[5]<<8)+packet[6]);
     if(packet[2] == 0) Serial.println("Двигатель блокирован"); 
       else if(packet[2] == 1) Serial.println("Нормальная работа"); 
         else if(packet[2] == 3) Serial.println("Настройки приняты"); 
           else Serial.println("Неизвестное значение 3-го байта!");
     if(packet[3] & (1 << 0)) Serial.println("Ошибка двигателя (M)");
     if(packet[3] & (1 << 1)) Serial.println("Ошибка 'ECU'");
-    if(packet[3] & (1 << 2)) Serial.println("Ошибка '!'");
+    if(packet[3] & (1 << 2)) Serial.println("Тормоз '!'");
     Serial.printf("Ток: %d Ампер\n", packet[4]);
     Serial.printf("Скорость: %d км/ч\n", mk_speed);
   } else if (p_ver == 2) {
@@ -233,4 +260,20 @@ void printPacketInfo(byte p_ver) {
     Serial.printf("Скорость: %d км/ч\n", mk_speed);
     
   }
+}
+
+uint8_t readACC() {
+  uint8_t i, acc_vol;
+  
+  // read the input on analog pin 34:
+  sensorValue = 0;
+  for(i=0;i<=100;i++) sensorValue += analogRead(ACC_PIN);
+    
+  // Convert the analog reading (which goes from 0 - 1095) to a voltage (0 - 3.3V):
+  acc_vol = (sensorValue/100)/16;
+  //voltage = (sensorValue/100) * (3.3 / 4095.0);
+  if(acc_vol <= 10) acc_vol = 0;
+  if(acc_vol > 200) acc_vol = 200;
+
+  return acc_vol;
 }
