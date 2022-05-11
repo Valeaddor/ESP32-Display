@@ -149,7 +149,7 @@ void printPacket() {
     Serial.println("CRC OK");
     printPacketInfo(uart_protocol);
   }
-  else Serial.printf("CRC BAD! Packet=0x%.2X Our=0x%.2X\n");
+  else Serial.printf("CRC BAD! Packet=0x%.2X Our=0x%.2X\n", packet[10], );
 }
 
 void tik() {
@@ -173,15 +173,19 @@ void check_serial() {
 
 boolean checkCRC(byte p_ver) {
 
+  byte pCRC;
   if(p_ver == 1) {
+    pCRC = packet[10];
     myCRC = packet[1] + packet[2] + packet[3] + packet[4] + packet[5] + packet[6] + packet[7] + packet[8] + packet[9];
-    if(myCRC == packet[10]) 
-      return true;
+    if(myCRC == pCRC) 
+      return true;    
   } else if (p_ver == 2) {
+    pCRC = packet[7];
     myCRC = packet[0]^packet[1]^packet[2]^packet[3]^packet[4]^packet[5]^packet[6];
-    if(myCRC == packet[7]) 
+    if(myCRC == pCRC) 
       return true;
-  } 
+  }
+  Serial.printf("CRC ERR! Packet=0x%.2X Our=0x%.2X PROTO: %d\n", pCRC, myCRC, p_ver);
   return false;
 }
 
