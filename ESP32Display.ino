@@ -138,22 +138,24 @@ void printPacket() {
   digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   
   Serial.println();
-  SerialBT.println();
+//  SerialBT.println();
   Serial.print("RECV PACKET: ");
-  SerialBT.println("RECV PACKET: ");
+//  SerialBT.println("RECV PACKET: ");
   
   for ( byte element=0; element<=byte_p-1; element++) {  // printf(tmp, "0x%.2X",data[i]);
-    Serial.printf("0x%.2X ",packet[element]);
-    SerialBT.printf("0x%.2X ",packet[element]);
+    Serial.printf("%.2X ",packet[element]);
+    SerialBT.printf("%.2X ",packet[element]);
   }
-  Serial.println();
-  SerialBT.println();
+//  Serial.println();
+//  SerialBT.println();
 
   if(checkCRC(uart_protocol)) {
     Serial.println("CRC OK");
     printPacketInfo(uart_protocol);
   }
   else Serial.println("CRC BAD!");
+
+  Serial.printf("SEND PACKET: %.2X %.2X %.2X %.2X %.2X %.2X %.2X %.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
 }
 
 void tik() {
@@ -171,16 +173,32 @@ void check_serial() {
     Serial.printf("\nGot: %.2X\n",cmdByte);
 //    Serial.print(cmdByte, HEX);
     if(cmdByte == 'l' || cmdByte == 'L') Serial.print("Check done!!!\n");
+    if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
+    if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
+    if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
+
+    if(cmdByte == 'u' || cmdByte == 'U' && (r_packet[4] <= 254)) r_packet[4]++;
+    if(cmdByte == 'd' || cmdByte == 'D' && (r_packet[4] >= 1)) r_packet[4]--;
+    if(cmdByte == '0') r_packet[4] = 0x00;  // сбрасываем газ
+
+    if(cmdByte == 'a' || cmdByte == 'A' && (r_packet[5] <= 254)) r_packet[5]++;
+    if(cmdByte == 'z' || cmdByte == 'Z' && (r_packet[5] >= 1)) r_packet[5]--;
+    if(cmdByte == '-') r_packet[5] = 0x00;  // сбрасываем тормоз
+
+    
+    int16_t myCRC = r_packet[1] + r_packet[2] + r_packet[3] + r_packet[4] + r_packet[5];
+    r_packet[6] = highByte(myCRC);
+    r_packet[7] = lowByte(myCRC);
   }
   
 }
 
 boolean checkCRC(byte p_ver) {
 
-  byte pCRC;
+  uint16_t pCRC, myCRC = 0;
   if(p_ver == 1) {
-    pCRC = packet[10];
-    myCRC = packet[1] + packet[2] + packet[3] + packet[4] + packet[5] + packet[6] + packet[7] + packet[8] + packet[9];
+    pCRC = (packet[9]<<8)+packet[10];
+    myCRC = packet[1] + packet[2] + packet[3] + packet[4] + packet[5] + packet[6] + packet[7] + packet[8];
     if(myCRC == pCRC) 
       return true;    
   } else if (p_ver == 2) {
@@ -195,15 +213,16 @@ boolean checkCRC(byte p_ver) {
 
 void printPacketInfo(byte p_ver) {
 
+  Serial.printf("Протокол: %d\n", p_ver);
   if(p_ver == 1) {
-    mk_speed = (packet[5]<<8)+packet[6];
+    mk_speed = ((packet[5]<<8)+packet[6]);
     if(packet[2] == 0) Serial.println("Двигатель блокирован"); 
       else if(packet[2] == 1) Serial.println("Нормальная работа"); 
         else if(packet[2] == 3) Serial.println("Настройки приняты"); 
           else Serial.println("Неизвестное значение 3-го байта!");
     if(packet[3] & (1 << 0)) Serial.println("Ошибка двигателя (M)");
     if(packet[3] & (1 << 1)) Serial.println("Ошибка 'ECU'");
-    if(packet[3] & (1 << 2)) Serial.println("Ошибка '!'");
+    if(packet[3] & (1 << 2)) Serial.println("Тормоз '!'");
     Serial.printf("Ток: %d Ампер\n", packet[4]);
     Serial.printf("Скорость: %d км/ч\n", mk_speed);
   } else if (p_ver == 2) {
