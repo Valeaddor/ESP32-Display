@@ -6,8 +6,10 @@
 #define TIMEOUT 20
 #define PROTO_1_BYTES 11
 #define PROTO_2_BYTES 8
-#define PROG_VER 0.11
+#define PROG_VER 0.12
 #define ACC_PIN 34
+#define ST_PIN 35
+#define WHEEL_D 7.8
 #define MY_NAME "ESP32dsp"
 
 
@@ -39,6 +41,7 @@ void setup() {
 
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(ACC_PIN, INPUT_PULLUP);
+  pinMode(ST_PIN, INPUT_PULLUP);
 
   // initialize both serial ports:
   Serial.begin(115200);
@@ -214,10 +217,6 @@ void check_serial() {
     if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
     if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
 
-//    if(cmdByte == 'u' || cmdByte == 'U' && (r_packet[4] <= 254)) r_packet[4]++;
-//    if(cmdByte == 'd' || cmdByte == 'D' && (r_packet[4] >= 1)) r_packet[4]--;
-//    if(cmdByte == '0') r_packet[4] = 0x00;  // сбрасываем газ
-
     if(cmdByte == 'f' || cmdByte == 'F' && (r_packet[5] <= 200)) r_packet[5]++;
 //    if(cmdByte == 'c' || cmdByte == 'C' && (r_packet[5] >= 1)) r_packet[5]--;
     if(cmdByte == '-') r_packet[5] = 0x00;  // сбрасываем тормоз
@@ -249,10 +248,12 @@ boolean checkCRC(byte p_ver) {
 }
 
 void printPacketInfo(byte p_ver) {
+  uint8_t mySpeed;
 
   Serial.printf("Протокол: %d\n", p_ver);
   if(p_ver == 1) {
     mk_speed = ((packet[5]<<8)+packet[6]);
+    mySpeed = ((((1000/mk_speed)*60) * ((WHEEL_D*3.14)/39)) * 60) / 1000;
     if(packet[2] == 0) Serial.println("Двигатель блокирован"); 
       else if(packet[2] == 1) Serial.println("Нормальная работа"); 
         else if(packet[2] == 3) Serial.println("Настройки приняты"); 
@@ -261,16 +262,17 @@ void printPacketInfo(byte p_ver) {
     if(packet[3] & (1 << 1)) Serial.println("Ошибка 'ECU'");
     if(packet[3] & (1 << 2)) Serial.println("Тормоз '!'");
     Serial.printf("Ток: %d Ампер\n", packet[4]);
-    Serial.printf("Скорость: %d км/ч\n", mk_speed);
+    Serial.printf("Скорость: %d км/ч\n", mySpeed);
   } else if (p_ver == 2) {
     mk_speed = (packet[5]<<8)+packet[6];
+    mySpeed = ((((1000/mk_speed)*60) * ((WHEEL_D*3.14)/100)) * 60) / 1000;
     bat_current = (packet[3]<<8)+packet[4];
     if(packet[1] & (1 << 0)) Serial.println("Ошибка двигателя (M)");
     if(packet[1] & (1 << 1)) Serial.println("Круиз контроль ON");
     if(packet[1] & (1 << 3)) Serial.println("Ошибка 'ECU'");
     if(packet[1] & (1 << 6)) Serial.println("Ошибка!!!");
     Serial.printf("Ток: %d.%d Ампер\n", bat_current/10, bat_current%10);
-    Serial.printf("Скорость: %d км/ч\n", mk_speed);
+    Serial.printf("Скорость: %d км/ч\n", mySpeed);
     
   }
 }
