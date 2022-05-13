@@ -265,7 +265,7 @@ void printPacketInfo(byte p_ver) {
     Serial.printf("Скорость: %d км/ч\n", mySpeed);
   } else if (p_ver == 2) {
     mk_speed = (packet[5]<<8)+packet[6];
-    mySpeed = ((((1000/mk_speed)*60) * ((WHEEL_D*3.14)/100)) * 60) / 1000;
+    mySpeed = ((((1000/mk_speed)*60) * ((WHEEL_D*3.14)/39)) * 60) / 1000;
     bat_current = (packet[3]<<8)+packet[4];
     if(packet[1] & (1 << 0)) Serial.println("Ошибка двигателя (M)");
     if(packet[1] & (1 << 1)) Serial.println("Круиз контроль ON");
