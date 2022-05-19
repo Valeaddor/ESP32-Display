@@ -82,7 +82,7 @@ void setup() {
   display.flipScreenVertically();
   display.setFont(ArialMT_Plain_24);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(0, 0, String(PROG_VER));
+  display.drawString(64, 22, String(PROG_VER));
   display.display();
 
   // initialize both serial ports:
@@ -354,7 +354,7 @@ void printPacketInfo(byte p_ver) {
     if(packet[1] & (1 << 6)) Serial.println("Ошибка!!!");
     Serial.printf("Ток: %d.%d Ампер\n", bat_current/10, bat_current%10);
     Serial.printf("Скорость: %d км/ч\n", mySpeed);
-    
+    displaySpeed(mySpeed);
   }
 }
 
@@ -367,8 +367,8 @@ uint8_t readACC() {
   for(i=0;i<100;i++) sensorValue += analogRead(ACC_PIN);
     
   sensorValue = (sensorValue/100);
-  if(sensorValue < 800) sensorValue = min_acc_value; // 800
-  if(sensorValue > 3050) sensorValue = max_acc_value; // 3050
+  if(sensorValue < min_acc_value) sensorValue = min_acc_value; // 800
+  if(sensorValue > max_acc_value) sensorValue = max_acc_value; // 3050
 //  acc_vol = map(sensorValue, 800, 3050, 0, 205);
   acc_vol = map(sensorValue, min_acc_value, max_acc_value, 0, max_speed);
   if(acc_vol < 10) acc_vol = 0;
@@ -383,11 +383,11 @@ uint8_t readREG() {
   
   // read the input on analog pin REG_PIN
   sensorValue = 0;
-  for(i=0;i<19;i++) sensorValue += analogRead(REG_PIN);
+  for(i=0;i<20;i++) sensorValue += analogRead(REG_PIN);
     
   sensorValue = (sensorValue/20);
-  if(sensorValue < 800) sensorValue = min_reg_value; // 800
-  if(sensorValue > 3050) sensorValue = max_reg_value; // 3050
+  if(sensorValue < min_reg_value) sensorValue = min_reg_value; // 800
+  if(sensorValue > max_reg_value) sensorValue = max_reg_value; // 3050
   reg_vol = map(sensorValue, min_reg_value, max_reg_value, 0, 200);
   if(reg_vol < 10) reg_vol = 0;
 
@@ -410,6 +410,15 @@ void calc_start_CRC(uint8_t p_ver) {
 }
 
 void displaySpeed(uint8_t mk_speed) {
+  display.setFont(ArialMT_Plain_24);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.drawString(64, 22, String(mk_speed));
+  display.display();
+}
+
+void displayUpInfo(uint8_t proto) {
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(0, 0, String(proto));
   display.display();
 }
