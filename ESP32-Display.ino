@@ -17,8 +17,10 @@
 #define POWER_BT 19
 #define WHEEL_D 7.8
 #define MY_NAME "ESP32dsp"
+#define PROTO_ERR 1
+#define ACC_REG_ERR 5
 
-#define PROG_VER 0.13
+#define PROG_VER 0.14
 
 
 //bool start_p = false;
@@ -124,22 +126,24 @@ void setup() {
   Serial.println("Port 9600 8N1 RX pin 16 TX pin 17");
   SerialBT.println("Port 9600 8N1 RX pin 16 TX pin 17");
 
-// accValue = readACC();
-//  if(accValue != 0) {
-  if(readACC() != 0) {
+  accValue = readACC();
+  if(accValue != 0) {
+//  if(readACC() != 0) {
       Serial.printf("Значение акселератора: %d\n", accValue);
       Serial.println("Требуется калибровка!!!");
+      SerialBT.printf("ERR ACC: %d\n", accValue);
       is_error = true;
-      Err_N = 5; // TODO:
+      Err_N = ACC_REG_ERR; // TODO:
   }
 
-//  regValue = readREG();
-//  if(regValue != 0) {
-  if(readREG() != 0) {
-      Serial.printf("Значение тормоза: %d\n", accValue);
+  regValue = readREG();
+  if(regValue != 0) {
+//  if(readREG() != 0) {
+      Serial.printf("Значение тормоза: %d\n", regValue);
       Serial.println("Требуется калибровка!!!");
+      SerialBT.printf("ERR REG: %d\n", regValue);
       is_error = true;
-      Err_N = 6; // TODO:
+      Err_N = ACC_REG_ERR; // TODO:
   }
   
 
@@ -151,7 +155,14 @@ void setup() {
 
 void loop() {
 
-  if(Power_Off) while(true);  // режим выключения TODO: небольшой таймаут с инфомацией на экране о выключении
+  if(Power_Off) {
+    displayPowerOff();
+    delay(500);
+    digitalWrite(POWER_PIN, LOW);
+    while(true);  // режим выключения TODO: небольшой таймаут с инфомацией на экране о выключении
+  }
+
+//  if(is_error) displayError(Err_N);
 
   if (mySerial.available()) {
     oldByte = inByte;
@@ -197,9 +208,9 @@ void loop() {
 
   tik();
 
-  check_pwr_bts();
-
   check_serial();
+
+  check_pwr_bts();
 
 }
 
@@ -208,7 +219,7 @@ void sendPacket() {
     is_start_p = false;
     
     mySerial.write(start_packet,sizeof(start_packet));
-  } else {
+  } else if(!is_error) {  // если ошибка не посылаем нормальный пакет ???
     r_packet[4] = readACC();
     r_packet[5] = readREG();
 
@@ -225,6 +236,7 @@ void protoError() {
 //  SerialBT.println();
   Serial.print("Protocol unknown!!!");
   SerialBT.println("PROTO ERR");
+  displayError(PROTO_ERR);
   
 }
 
@@ -246,7 +258,7 @@ void printPacket() {
   if(checkCRC(uart_protocol)) {
     Serial.println("CRC OK");
     SerialBT.println("OK");
-    printPacketInfo(uart_protocol);
+    if(is_error) displayError(Err_N); else printPacketInfo(uart_protocol);
   }
   else { 
     Serial.println("CRC BAD!");
@@ -275,7 +287,6 @@ void check_pwr_bts() {
       } else { // кнопка питания уже была нажата
         if(millis() > pwr_bt_time) { // прошло 2 секунды для выключения ?
           Power_Off = true;
-          digitalWrite(POWER_PIN, LOW);
         }
       }
     }
@@ -293,21 +304,46 @@ void check_serial() {
 
     if(cmdByte == 'v' || cmdByte == 'V') Serial.printf("Version: %.2f\n",PROG_VER);
     if(cmdByte == 'a' || cmdByte == 'A') Serial.printf("ACC: %d\n",readACC());
+    if(cmdByte == 'r' || cmdByte == 'R') Serial.printf("ACC: %d\n",readREG());
+    
     if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
     if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
     if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
+
+    if(cmdByte == 's' || cmdByte == 'S') Serial.printf("SPEED: %d\n",r_packet[2]);
 
 //    if(cmdByte == 'f' || cmdByte == 'F' && (r_packet[5] <= 200)) r_packet[5]++;
 //    if(cmdByte == 'c' || cmdByte == 'C' && (r_packet[5] >= 1)) r_packet[5]--;
 //    if(cmdByte == '-') r_packet[5] = 0x00;  // сбрасываем тормоз
 
-    
-    int16_t myCRC = r_packet[1] + r_packet[2] + r_packet[3] + r_packet[4] + r_packet[5];
-    r_packet[6] = highByte(myCRC);
-    r_packet[7] = lowByte(myCRC);
+//    перенесено в  sendPacket()    
+//    int16_t myCRC = r_packet[1] + r_packet[2] + r_packet[3] + r_packet[4] + r_packet[5];
+//    r_packet[6] = highByte(myCRC);
+//    r_packet[7] = lowByte(myCRC);
   }
   
 }
+
+
+void check_BTserial() {
+  if (SerialBT.available()) {
+    cmdByte = SerialBT.read();
+    SerialBT.printf("\nGot: %.2X\n",cmdByte);
+
+    if(cmdByte == 'v' || cmdByte == 'V') SerialBT.printf("Version: %.2f\n",PROG_VER);
+    if(cmdByte == 'a' || cmdByte == 'A') SerialBT.printf("ACC: %d\n",readACC());
+    if(cmdByte == 'r' || cmdByte == 'R') SerialBT.printf("ACC: %d\n",readREG());
+    
+    if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
+    if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
+    if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
+    
+    if(cmdByte == 's' || cmdByte == 'S') SerialBT.printf("SPEED: %d\n",r_packet[2]);
+  }
+  
+}
+
+
 
 boolean checkCRC(byte p_ver) {
 
@@ -331,6 +367,7 @@ void printPacketInfo(byte p_ver) {
   uint8_t mySpeed;
 
   Serial.printf("Протокол: %d\n", p_ver);
+  displayUpInfo(p_ver);
   if(p_ver == 1) {
     mk_speed = ((packet[5]<<8)+packet[6]);
     mySpeed = ((((1000/mk_speed)*60) * ((WHEEL_D*3.14)/39)) * 60) / 1000;
@@ -418,7 +455,27 @@ void displaySpeed(uint8_t mk_speed) {
 
 void displayUpInfo(uint8_t proto) {
   display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.drawString(0, 0, String(proto));
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(64, 0, String(proto));
+  display.display();
+}
+
+void displayError(uint8_t Err) {
+  // clear the display
+  display.clear();
+  
+  display.setFont(ArialMT_Plain_24);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(64, 22, "Error " + String(Err));
+  display.display();
+}
+
+void displayPowerOff() {
+  // clear the display
+  display.clear();
+  
+  display.setFont(ArialMT_Plain_16);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(128, 22, "OFF");
   display.display();
 }
