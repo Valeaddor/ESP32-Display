@@ -159,10 +159,23 @@ void loop() {
     displayPowerOff();
     delay(500);
     digitalWrite(POWER_PIN, LOW);
-    while(true);  // режим выключения TODO: небольшой таймаут с инфомацией на экране о выключении
+    while(true);  // режим выключения, небольшой таймаут с инфомацией на экране о выключении
   }
 
-//  if(is_error) displayError(Err_N);
+
+  tik();
+
+  check_mySerial();
+
+  check_serial();
+
+  check_BTserial();
+
+  check_pwr_bts();
+
+}
+
+void check_mySerial() {
 
   if (mySerial.available()) {
     oldByte = inByte;
@@ -205,13 +218,6 @@ void loop() {
     }
     
   }
-
-  tik();
-
-  check_serial();
-
-  check_pwr_bts();
-
 }
 
 void sendPacket() {
