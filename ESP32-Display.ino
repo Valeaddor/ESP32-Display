@@ -1,30 +1,16 @@
 #include <HardwareSerial.h>
 #include "BluetoothSerial.h"
 
-#include "SSD1306Wire.h"        // legacy: #include "SSD1306.h"
-// OR #include "SH1106Wire.h"   // legacy: #include "SH1106.h"
-
 #define RX_PIN 16
 #define TX_PIN 17
 #define TIMEOUT 20
-#define PWR_TIMEOUT 2000
 #define PROTO_1_BYTES 11
 #define PROTO_2_BYTES 8
-#define LAST_PROTO 1
-
-#define HALL_MIN 500
-#define HALL_MAX 3500
-#define ACC_PIN 34    // Пин подключения датчика холла акселератора
-#define REG_PIN 35    // Пин подключения датчика холла тормоза
-#define POWER_PIN 23  // Пин на блок питания (поддержка после отпуская конопки питания)
-#define POWER_BT 19   // Пин подключения кнопки питания (через диод)
-#define SPEED_BT 18   // Пин подключения кнопки скорости (нажата LOW)
+#define PROG_VER 0.12
+#define ACC_PIN 34
+#define ST_PIN 35
 #define WHEEL_D 7.8
 #define MY_NAME "ESP32dsp"
-#define PROTO_ERR 1
-#define ACC_REG_ERR 5
-
-#define PROG_VER 0.15
 
 
 //bool start_p = false;
@@ -35,73 +21,27 @@ byte inByte, oldByte, cmdByte = 0;
 uint8_t BTmac[6] = {0};
 byte r_packet[] = {0x3e, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x05};
 byte start_packet[] = {0x3e, 0x2c, 0x0b, 0x00, 0x3c, 0x28, 0x1e, 0x32, 0x46, 0x64, 0x01, 0x00, 0x00, 0x00, 0x01, 0x96};
-
 unsigned long loop_time;
-unsigned long pwr_bt_time;
-
-int16_t bat_current;
-//byte accValue = 0;
-//byte regValue = 0;
-byte acc_vol, reg_vol = 0;
+int16_t mk_speed, bat_current;
+uint16_t accValue = 0;
 char myBTName[22] = {0};
-//unsigned long sensorValue;
-byte Err_N = 0;
-
-uint16_t min_acc_value = 800;
-uint16_t max_acc_value = 3080;
-uint16_t min_reg_value = 800;
-uint16_t max_reg_value = 3080;
-
-byte i, max_speed;
-unsigned int sensorValue = 0;
-unsigned long pinValue = 0;
+unsigned long sensorValue;
+uint8_t Err_N = 0;
 
 boolean is_start_p = true;
 boolean is_error = false;
-boolean mk_ok = false;
-boolean pwr_bt = false;
-boolean Power_Off = false;
-boolean Power_On = true;
-
-// boolean run_loop = true;
 
 HardwareSerial mySerial(2);
 BluetoothSerial SerialBT;
 
-// Initialize the OLED display using Arduino Wire:
-SSD1306Wire display(0x3c, SDA, SCL);   // ADDRESS, SDA, SCL  -  SDA and SCL usually populate automatically based on your board's pins_arduino.h e.g. https://github.com/esp8266/Arduino/blob/master/variants/nodemcu/pins_arduino.h
-// SSD1306Wire display(0x3c, D3, D5);  // ADDRESS, SDA, SCL  -  If not, they can be specified manually.
-// SSD1306Wire display(0x3c, SDA, SCL, GEOMETRY_128_32);  // ADDRESS, SDA, SCL, OLEDDISPLAY_GEOMETRY  -  Extra param required for 128x32 displays.
-// SH1106Wire display(0x3c, SDA, SCL);     // ADDRESS, SDA, SCL
-
-
-
 void setup() {
-  uint16_t hallValue = 0;
-
-
-  pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(POWER_PIN, OUTPUT);
-  pinMode(POWER_BT, INPUT_PULLUP);
-  pinMode(SPEED_BT, INPUT_PULLUP);
-  pinMode(ACC_PIN, INPUT);
-  pinMode(REG_PIN, INPUT);
-
-  digitalWrite(POWER_PIN,HIGH);
-
 
   esp_read_mac(BTmac, ESP_MAC_BT);
   sprintf(myBTName, "%s%02X%02X%02X%02X%02X%02X", MY_NAME, BTmac[0], BTmac[1], BTmac[2], BTmac[3], BTmac[4], BTmac[5]);
 
-
- // Initialising the UI will init the display too.
-  display.init();
-
-  display.flipScreenVertically();
-  display.setFont(ArialMT_Plain_24);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 22, "VER: " + String(PROG_VER));
-  display.display();
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(ACC_PIN, INPUT_PULLUP);
+  pinMode(ST_PIN, INPUT_PULLUP);
 
   // initialize both serial ports:
   Serial.begin(115200);
@@ -140,75 +80,31 @@ void setup() {
   
   mySerial.begin(9600,SERIAL_8N1, RX_PIN, TX_PIN);
   Serial.println("Port 9600 8N1 RX pin 16 TX pin 17");
-//  SerialBT.println("Port 9600 8N1 RX pin 16 TX pin 17");
+  SerialBT.println("Port 9600 8N1 RX pin 16 TX pin 17");
 
-  hallValue = analogRead(ACC_PIN);
-
-  if(hallValue < HALL_MIN || hallValue > HALL_MAX) {
-      Serial.printf("Значение акселератора: %d\n", hallValue);
+  accValue = readACC();
+  if(accValue != 0) {
+      Serial.printf("Значение акселератора: %d\n", accValue);
       Serial.println("Требуется калибровка!!!");
-      SerialBT.printf("ERR ACC: %d\n", hallValue);
       is_error = true;
-      Err_N = ACC_REG_ERR; // TODO:
+      Err_N = 5;
   }
 
-  hallValue = analogRead(REG_PIN);
-
-  if(hallValue < HALL_MIN || hallValue > HALL_MAX) {
-      Serial.printf("Значение тормоза: %d\n", hallValue);
-      Serial.println("Требуется калибровка!!!");
-      SerialBT.printf("ERR REG: %d\n", hallValue);
-//      is_error = true;
-//      Err_N = ACC_REG_ERR; // TODO:
-  }
-  
-
-  calc_start_CRC(LAST_PROTO);
+  calc_start_CRC(1);
 
   loop_time = millis() + TIMEOUT;
   
 }
 
 void loop() {
-
-  if(Power_Off) {
-    displayPowerOff();
-    digitalWrite(POWER_PIN, LOW);
-    delay(500);
-    while(true);  // режим выключения, небольшой таймаут с инфомацией на экране о выключении
-  }
-
-  tik();
-
-  check_mySerial();
-
-  check_serial();
-
-  check_BTserial();
-
-  check_pwr_bts();
-
-}
-
-void tik() {
-  if(uart_protocol) {
-    if(millis() > loop_time) {
-      sendPacket(uart_protocol);
-      loop_time = millis() + TIMEOUT;
-    }
-  }
-}
-
-
-void check_mySerial() {
-
+  
   if (mySerial.available()) {
     oldByte = inByte;
     inByte = mySerial.read();
 
     Serial.printf("%.2X ",inByte);
 
-    if(uart_protocol) {
+    if(uart_protocol != 0) {
       packet[byte_p++] = inByte;
     } else {
       if(inByte == 0x07 && oldByte == 0x3c) {
@@ -225,34 +121,37 @@ void check_mySerial() {
       if(packet[0] == 0x3c && packet[1] == 0x07) {
         printPacket();
         byte_p = 0;
-        mk_ok = true;
       }
     } else if (uart_protocol == 2 && byte_p == PROTO_2_BYTES) {
       if(packet[0] == 0x28) {
         printPacket();
         byte_p = 0;
-        mk_ok = true;
       }
     }
 
-    if(byte_p >= 29) { // ошибка приема данных, не верный протокол?!
+    if(byte_p >= 29) {
       uart_protocol = 0;
-      mk_ok = false;
       protoError();
-      byte_p = 0; 
+      byte_p = 0; // переполнение буфера!
     }
     
   }
+
+  tik();  
+
+  check_serial();
+
+
+
 }
 
-void sendPacket(byte p_ver) {
-  if(is_start_p&&mk_ok) {
+void sendPacket() {
+  if(is_start_p) {
     is_start_p = false;
     
     mySerial.write(start_packet,sizeof(start_packet));
-  } else if(!is_error) {  // если ошибка не посылаем обратный пакет ???
+  } else {
     r_packet[4] = readACC();
-    r_packet[5] = readREG();
 
     int16_t myCRC = r_packet[1] + r_packet[2] + r_packet[3] + r_packet[4] + r_packet[5];
     r_packet[6] = highByte(myCRC);
@@ -264,11 +163,9 @@ void sendPacket(byte p_ver) {
 
 void protoError() {
   Serial.println();
-//  SerialBT.println();
-  Serial.println("Protocol unknown!!!");
-  SerialBT.println("PROTO ERR");
-  Err_N = PROTO_ERR;
-  displayError();
+  SerialBT.println();
+  Serial.print("Protocol unknown!!!");
+  SerialBT.println("Protocol unknown!!!");
   
 }
 
@@ -290,8 +187,7 @@ void printPacket() {
   if(checkCRC(uart_protocol)) {
     Serial.println("CRC OK");
     SerialBT.println("OK");
-    if(is_error) displayError(); 
-      else printPacketInfo(uart_protocol);
+    printPacketInfo(uart_protocol);
   }
   else { 
     Serial.println("CRC BAD!");
@@ -301,26 +197,14 @@ void printPacket() {
   Serial.printf("SEND PACKET: %.2X %.2X %.2X %.2X %.2X %.2X %.2X %.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
 }
 
-
-void check_pwr_bts() {
-
-  if(digitalRead(POWER_BT) == LOW) // кнопка питания нажата
-    if(!Power_On) { // режим включения ???
-      if(!pwr_bt) { // кнопку питания только нажали 
-        pwr_bt = true;
-        pwr_bt_time = millis() + PWR_TIMEOUT;
-      } else { // кнопка питания уже была нажата
-        if(millis() > pwr_bt_time) { // прошло 2 секунды для выключения ?
-          Power_Off = true;
-        }
-      }
+void tik() {
+  if(uart_protocol == 1) {
+    if(millis() > loop_time) {
+      sendPacket();
+      loop_time = millis() + TIMEOUT;
     }
-  else {
-    if(Power_On) Power_On = false;
-    if(pwr_bt) pwr_bt = false;
   }
 }
-
 
 void check_serial() {
   if (Serial.available()) {
@@ -329,38 +213,21 @@ void check_serial() {
 
     if(cmdByte == 'v' || cmdByte == 'V') Serial.printf("Version: %.2f\n",PROG_VER);
     if(cmdByte == 'a' || cmdByte == 'A') Serial.printf("ACC: %d\n",readACC());
-    if(cmdByte == 'r' || cmdByte == 'R') Serial.printf("ACC: %d\n",readREG());
-    
     if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
     if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
     if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
 
-    if(cmdByte == 's' || cmdByte == 'S') Serial.printf("SPEED: %d\n",r_packet[2]);
+    if(cmdByte == 'f' || cmdByte == 'F' && (r_packet[5] <= 200)) r_packet[5]++;
+//    if(cmdByte == 'c' || cmdByte == 'C' && (r_packet[5] >= 1)) r_packet[5]--;
+    if(cmdByte == '-') r_packet[5] = 0x00;  // сбрасываем тормоз
 
+    
+    int16_t myCRC = r_packet[1] + r_packet[2] + r_packet[3] + r_packet[4] + r_packet[5];
+    r_packet[6] = highByte(myCRC);
+    r_packet[7] = lowByte(myCRC);
   }
   
 }
-
-
-void check_BTserial() {
-  if (SerialBT.available()) {
-    cmdByte = SerialBT.read();
-    SerialBT.printf("\nGot: %.2X\n",cmdByte);
-
-    if(cmdByte == 'v' || cmdByte == 'V') SerialBT.printf("Version: %.2f\n",PROG_VER);
-    if(cmdByte == 'a' || cmdByte == 'A') SerialBT.printf("ACC: %d\n",readACC());
-    if(cmdByte == 'r' || cmdByte == 'R') SerialBT.printf("ACC: %d\n",readREG());
-    
-    if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
-    if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
-    if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
-    
-    if(cmdByte == 's' || cmdByte == 'S') SerialBT.printf("SPEED: %d\n",r_packet[2]);
-  }
-  
-}
-
-
 
 boolean checkCRC(byte p_ver) {
 
@@ -381,15 +248,12 @@ boolean checkCRC(byte p_ver) {
 }
 
 void printPacketInfo(byte p_ver) {
-  byte mySpeed;
-  uint16_t mk_speed;
+  uint8_t mySpeed;
 
   Serial.printf("Протокол: %d\n", p_ver);
-
   if(p_ver == 1) {
     mk_speed = ((packet[5]<<8)+packet[6]);
     mySpeed = ((((1000/mk_speed)*60) * ((WHEEL_D*3.14)/39)) * 60) / 1000;
-    bat_current = packet[4];
     if(packet[2] == 0) Serial.println("Двигатель блокирован"); 
       else if(packet[2] == 1) Serial.println("Нормальная работа"); 
         else if(packet[2] == 3) Serial.println("Настройки приняты"); 
@@ -397,9 +261,8 @@ void printPacketInfo(byte p_ver) {
     if(packet[3] & (1 << 0)) Serial.println("Ошибка двигателя (M)");
     if(packet[3] & (1 << 1)) Serial.println("Ошибка 'ECU'");
     if(packet[3] & (1 << 2)) Serial.println("Тормоз '!'");
-    Serial.printf("Ток: %d Ампер\n", bat_current);
+    Serial.printf("Ток: %d Ампер\n", packet[4]);
     Serial.printf("Скорость: %d км/ч\n", mySpeed);
-
   } else if (p_ver == 2) {
     mk_speed = (packet[5]<<8)+packet[6];
     mySpeed = ((((1000/mk_speed)*60) * ((WHEEL_D*3.14)/39)) * 60) / 1000;
@@ -410,31 +273,21 @@ void printPacketInfo(byte p_ver) {
     if(packet[1] & (1 << 6)) Serial.println("Ошибка!!!");
     Serial.printf("Ток: %d.%d Ампер\n", bat_current/10, bat_current%10);
     Serial.printf("Скорость: %d км/ч\n", mySpeed);
-
+    
   }
-  displayUpInfo(r_packet[4],p_ver,r_packet[5]);
-  displaySpeed(mySpeed);
-  displayDownInfo(r_packet[2],bat_current);
 }
 
-byte readACC() {
-
-  max_speed = start_packet[r_packet[2] + 6] * 2;
-  // read the input on analog pin ACC_PIN
-//  sensorValue = 0;
-  pinValue = 0;
-  for(i=0; i<100; i++) pinValue += analogRead(ACC_PIN);
-    
-  sensorValue = (pinValue/100);
-
-  if(sensorValue < min_acc_value) sensorValue = min_acc_value; // 800
-  if(sensorValue > max_acc_value) { 
-    if(sensorValue < HALL_MAX) max_acc_value = sensorValue;
-  }
+uint8_t readACC() {
+  uint8_t i, acc_vol;
   
-
-//  acc_vol = map(sensorValue, 800, 3070, 0, 205);
-  acc_vol = map(sensorValue, min_acc_value, max_acc_value, 0, max_speed);
+  // read the input on analog pin ACC_PIN
+  sensorValue = 0;
+  for(i=0;i<100;i++) sensorValue += analogRead(ACC_PIN);
+    
+  sensorValue = (sensorValue/100);
+  if(sensorValue < 800) sensorValue = 800;
+  if(sensorValue > 3050) sensorValue = 3050;
+  acc_vol = map(sensorValue, 800, 3050, 0, 205);
   if(acc_vol < 10) acc_vol = 0;
 
   //voltage = (sensorValue/100) * (3.3 / 4095.0);
@@ -442,115 +295,16 @@ byte readACC() {
   return acc_vol;
 }
 
-byte readREG() {
-  
-  // read the input on analog pin REG_PIN
-  pinValue = 0;
-  for(i=0; i<20; i++) pinValue += analogRead(REG_PIN);
-    
-  sensorValue = (pinValue/20);
-
-    
-  if(sensorValue < min_reg_value) sensorValue = min_reg_value;
-  if(sensorValue > max_reg_value) {
-    if(sensorValue < HALL_MAX) max_reg_value = sensorValue;
-  }
-  reg_vol = map(sensorValue, min_reg_value, max_reg_value, 0, 205);
-  if(reg_vol < 10) reg_vol = 0;
-
-  return reg_vol;
-}
-
-
-void calc_start_CRC(byte p_ver) {
-  uint16_t myCRC;
+void calc_start_CRC(uint8_t p_ver) {
+  int16_t myCRC;
   
   if(p_ver == 1) {
     myCRC = start_packet[1]+start_packet[2]+start_packet[3]+start_packet[4]+start_packet[5]+start_packet[6]+start_packet[7]+start_packet[8]+start_packet[9]+start_packet[10]+start_packet[11]+start_packet[12]+start_packet[13];
-    start_packet[14] = highByte(myCRC);
-    start_packet[15] = lowByte(myCRC);
+    r_packet[14] = highByte(myCRC);
+    r_packet[15] = lowByte(myCRC);
   } else if (p_ver == 2) {
     myCRC = 0;
     // TODO:
   }
   
 }
-
-
-void displayUpInfo(byte reg_v, byte p_ver, byte acc_v) {
-  // clear the display
-  display.clear();
-
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.drawString(0, 0, String(reg_v));
-  if(reg_v) display.fillRect(0, 64 - (reg_v/4), 4, 64);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 0, String(p_ver));
-  display.setTextAlignment(TEXT_ALIGN_RIGHT);
-  display.drawString(128, 0, String(acc_v));
-  if(acc_v) display.fillRect(124, 64 - (acc_v/4), 128, 64);
-
-//  display.drawVerticalLine(126, 64 - (acc_v/4), 64);
-//  display.drawVerticalLine(127, 64 - (acc_v/4), 64);
-//  display.drawVerticalLine(128, 64 - (acc_v/4), 64);
-  
-  display.display();
-}
-
-void displaySpeed(byte mk_speed) {
-  display.setFont(ArialMT_Plain_24);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 22, String(mk_speed));
-  display.display();
-}
-
-
-void displayDownInfo(byte gear, byte current) {
-  display.setFont(ArialMT_Plain_16);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(32, 64, String(gear));
-  display.drawString(96, 64, String(current));
-  display.display();
-}
-
-
-void displayError() {
-  // clear the display
-  display.clear();
-  
-  display.setFont(ArialMT_Plain_24);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 32, "Error " + String(Err_N));
-  display.display();
-}
-
-void displayPowerOff() {
-  // clear the display
-  display.clear();
-  
-  display.setFont(ArialMT_Plain_24);
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 64, "OFF");
-  display.display();
-}
-
-/*
-void displayACC() {
-  display.clear();
-  display.setFont(ArialMT_Plain_10);
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.drawString(0, 22, String(accValue));
-  display.display();
-//  run_loop = false;
-}
-*/
-/*
-void displayLoopRight() {
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_RIGHT);
-  display.drawString(128, 22, String(loop_count));
-  display.display();
-  run_loop = false;
-}
-*/
