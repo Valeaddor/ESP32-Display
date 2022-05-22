@@ -48,7 +48,6 @@ int16_t bat_current;
 float battery_fvol = 0;
 byte acc_vol, reg_vol = 0;
 char myBTName[22] = {0};
-//unsigned long sensorValue;
 byte Err_N = 0;
 
 uint16_t min_acc_value = 800;
@@ -56,7 +55,7 @@ uint16_t max_acc_value = 3080;
 uint16_t min_reg_value = 800;
 uint16_t max_reg_value = 3080;
 
-int16_t volt_correct = 125;
+int16_t volt_correct = 130;   // корекция вольтметра 130 ~= 2 Вольт
 
 byte max_speed;
 unsigned int sensorValue = 0;
@@ -96,7 +95,6 @@ void setup() {
 
   digitalWrite(POWER_PIN,HIGH);
 
-
   esp_read_mac(BTmac, ESP_MAC_BT);
   sprintf(myBTName, "%s%02X%02X%02X%02X%02X%02X", MY_NAME, BTmac[0], BTmac[1], BTmac[2], BTmac[3], BTmac[4], BTmac[5]);
 
@@ -107,7 +105,7 @@ void setup() {
 //  display.flipScreenVertically();
   display.setFont(ArialMT_Plain_24);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 22, "VER: " + String(PROG_VER));
+  display.drawString(64, 20, "VER: " + String(PROG_VER));
   display.display();
 
   // initialize both serial ports:
@@ -153,7 +151,6 @@ void setup() {
 
   if(hallValue < HALL_MIN || hallValue > HALL_MAX) {
       Serial.printf("Значение акселератора: %d\n", hallValue);
-      Serial.println("Требуется калибровка!!!");
       SerialBT.printf("ERR ACC: %d\n", hallValue);
       is_error = true;
       Err_N = ACC_REG_ERR; // TODO:
@@ -163,7 +160,6 @@ void setup() {
 
   if(hallValue < HALL_MIN || hallValue > HALL_MAX) {
       Serial.printf("Значение тормоза: %d\n", hallValue);
-      Serial.println("Требуется калибровка!!!");
       SerialBT.printf("ERR REG: %d\n", hallValue);
 //      is_error = true;
 //      Err_N = ACC_REG_ERR; // TODO:
@@ -178,16 +174,16 @@ void setup() {
 
 void loop() {
 
-  if(Power_Off) {
+  if(Power_Off) {   // режим выключения, небольшой таймаут с инфомацией на экране о выключении
     displayPowerOff();
     digitalWrite(POWER_PIN, LOW);
     delay(500);
-    while(true);  // режим выключения, небольшой таймаут с инфомацией на экране о выключении
+    while(true);  
   }
 
-  tik();
+  tik();    // Отправка сообщения контроллеру MK если надо.
 
-  check_battery();
+  check_battery();  // Считываем напряжение АКБ
 
   check_mySerial();
 
@@ -200,7 +196,7 @@ void loop() {
 }
 
 void tik() {
-  if(uart_protocol) {
+  if(uart_protocol) {   // протокол обмена с контроллером МК уже известен
     if(millis() > loop_time) {
       sendPacket(uart_protocol);
       loop_time = millis() + TIMEOUT;
@@ -273,7 +269,6 @@ void sendPacket(byte p_ver) {
 
 void protoError() {
   Serial.println();
-//  SerialBT.println();
   Serial.println("Protocol unknown!!!");
   SerialBT.println("PROTO ERR");
   Err_N = PROTO_ERR;
@@ -345,10 +340,6 @@ void check_serial() {
     if(cmdByte == 'a' || cmdByte == 'A') Serial.printf("ACC: %d\n",readACC());
     if(cmdByte == 'r' || cmdByte == 'R') Serial.printf("REG: %d\n",readREG());
     
-    if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
-    if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
-    if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
-
     if(cmdByte == 's' || cmdByte == 'S') Serial.printf("SPEED: %d\n",r_packet[2]);
 
   }
@@ -585,12 +576,4 @@ void displayACC() {
 //  run_loop = false;
 }
 */
-/*
-void displayLoopRight() {
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_RIGHT);
-  display.drawString(128, 22, String(loop_count));
-  display.display();
-  run_loop = false;
-}
-*/
+
