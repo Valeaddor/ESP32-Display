@@ -27,26 +27,24 @@
 #define ACC_REG_ERR 5
 #define MAX_SENSOR_VALUE 4095
 
-#define PROG_VER 0.17
+#define PROG_VER 0.18
 
 
 //bool start_p = false;
 byte byte_p = 0;
 byte uart_protocol = 0;
 byte packet[30] = {0};
-byte inByte, oldByte, cmdByte = 0;
+byte inByte, oldByte, cmdByte, oldACC = 0;
 uint8_t BTmac[6] = {0};
 byte r_packet[] = {0x3e, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x05};
 byte start_packet[] = {0x3e, 0x2c, 0x0b, 0x00, 0x3c, 0x28, 0x1e, 0x32, 0x46, 0x64, 0x01, 0x00, 0x00, 0x00, 0x01, 0x96};
 
 unsigned long loop_time;
 unsigned long pwr_bt_time;
+//unsigned long pwr_off_time;
 
 int16_t bat_current;
-//byte accValue = 0;
-//byte regValue = 0;
 float battery_fvol = 0;
-byte acc_vol, reg_vol = 0;
 char myBTName[22] = {0};
 byte Err_N = 0;
 
@@ -54,19 +52,24 @@ uint16_t min_acc_value = 800;
 uint16_t max_acc_value = 3080;
 uint16_t min_reg_value = 800;
 uint16_t max_reg_value = 3080;
+byte start_acc_vol = 10;
+byte start_reg_vol = 10;
 
-int16_t volt_correct = 130;   // корекция вольтметра 130 ~= 2 Вольт
+int16_t volt_correct = 220;
+byte battery_min = 29;
 
 byte max_speed;
-unsigned int sensorValue = 0;
-unsigned long pinValue = 0;
+//unsigned int sensorValue = 0;
+//unsigned long pinValue = 0;
 
 boolean is_start_p = true;
+boolean conf_packet = false;
 boolean is_error = false;
 boolean mk_ok = false;
 boolean pwr_bt = false;
 boolean Power_Off = false;
 boolean Power_On = true;
+boolean short_press = false;
 
 uint8_t power_bt = HIGH;
 
@@ -93,19 +96,22 @@ void setup() {
   pinMode(ACC_PIN, INPUT);
   pinMode(REG_PIN, INPUT);
 
-  digitalWrite(POWER_PIN,HIGH);
 
   esp_read_mac(BTmac, ESP_MAC_BT);
   sprintf(myBTName, "%s%02X%02X%02X%02X%02X%02X", MY_NAME, BTmac[0], BTmac[1], BTmac[2], BTmac[3], BTmac[4], BTmac[5]);
 
+  readBAT();
+  if(battery_fvol > battery_min) digitalWrite(POWER_PIN,HIGH);
 
  // Initialising the UI will init the display too.
   display.init();
 
-//  display.flipScreenVertically();
   display.setFont(ArialMT_Plain_24);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(64, 20, "VER: " + String(PROG_VER));
+  display.drawString(64, 22, "VER: " + String(PROG_VER));
+  display.setFont(ArialMT_Plain_16);
+  if(battery_fvol < battery_min) display.drawString(64, 48, "!!! " + String(battery_fvol, 1) + " !!!");
+  else display.drawString(64, 48, String(battery_fvol, 1));
   display.display();
 
   // initialize both serial ports:
@@ -151,6 +157,7 @@ void setup() {
 
   if(hallValue < HALL_MIN || hallValue > HALL_MAX) {
       Serial.printf("Значение акселератора: %d\n", hallValue);
+//      Serial.println("Требуется калибровка!!!");
       SerialBT.printf("ERR ACC: %d\n", hallValue);
       is_error = true;
       Err_N = ACC_REG_ERR; // TODO:
@@ -160,6 +167,7 @@ void setup() {
 
   if(hallValue < HALL_MIN || hallValue > HALL_MAX) {
       Serial.printf("Значение тормоза: %d\n", hallValue);
+//      Serial.println("Требуется калибровка!!!");
       SerialBT.printf("ERR REG: %d\n", hallValue);
 //      is_error = true;
 //      Err_N = ACC_REG_ERR; // TODO:
@@ -174,20 +182,20 @@ void setup() {
 
 void loop() {
 
-  if(Power_Off) {   // режим выключения, небольшой таймаут с инфомацией на экране о выключении
+  if(Power_Off) {
     displayPowerOff();
     digitalWrite(POWER_PIN, LOW);
     delay(500);
-    while(true);  
+    while(true);  // режим выключения, небольшой таймаут с инфомацией на экране о выключении
   }
 
-  tik();    // Отправка сообщения контроллеру MK если надо.
+  tik();
 
-  check_battery();  // Считываем напряжение АКБ
+//  check_battery();
 
   check_mySerial();
 
-  check_serial();
+//  check_serial();
 
   check_BTserial();
 
@@ -196,7 +204,7 @@ void loop() {
 }
 
 void tik() {
-  if(uart_protocol) {   // протокол обмена с контроллером МК уже известен
+  if(uart_protocol) {
     if(millis() > loop_time) {
       sendPacket(uart_protocol);
       loop_time = millis() + TIMEOUT;
@@ -253,11 +261,14 @@ void check_mySerial() {
 void sendPacket(byte p_ver) {
   if(is_start_p&&mk_ok) {
     is_start_p = false;
-    
+    conf_packet = true;
     mySerial.write(start_packet,sizeof(start_packet));
   } else if(!is_error) {  // если ошибка не посылаем обратный пакет ???
+    oldACC = r_packet[4];
     r_packet[4] = readACC();
     r_packet[5] = readREG();
+
+    if(r_packet[4] == 0 && r_packet[5] == 0 && oldACC != 0 && start_packet[10] == 1) r_packet[5] = 0x10;
 
     int16_t myCRC = r_packet[1] + r_packet[2] + r_packet[3] + r_packet[4] + r_packet[5];
     r_packet[6] = highByte(myCRC);
@@ -269,6 +280,7 @@ void sendPacket(byte p_ver) {
 
 void protoError() {
   Serial.println();
+//  SerialBT.println();
   Serial.println("Protocol unknown!!!");
   SerialBT.println("PROTO ERR");
   Err_N = PROTO_ERR;
@@ -283,26 +295,31 @@ void printPacket() {
   Serial.println();
 //  SerialBT.println();
   Serial.print("RECV PACKET: ");
-//  SerialBT.println("RECV PACKET: ");
+  SerialBT.println("RECV: ");
   
-  for ( byte element=0; element<=byte_p-1; element++) {  // printf(tmp, "0x%.2X",data[i]);
-    Serial.printf("%.2X ",packet[element]);
-    SerialBT.printf("%.2X ",packet[element]);
+  for ( byte i=0; i<=byte_p-1; i++) {  // printf(tmp, "0x%.2X",data[i]);
+    Serial.printf("%.2X ",packet[i]);
+    SerialBT.printf("%.2X",packet[i]);
   }
-//  Serial.println();
 
   if(checkCRC(uart_protocol)) {
     Serial.println("CRC OK");
-    SerialBT.println("OK");
+    SerialBT.println(" OK");
     if(is_error) displayError(); 
       else printPacketInfo(uart_protocol);
   }
   else { 
     Serial.println("CRC BAD!");
-    SerialBT.println("!CRC");
+    SerialBT.println(" !CRC");
   }
 
+  if(conf_packet) {
+    SerialBT.printf("SEND: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
+    conf_packet = false;
+  } else {
   Serial.printf("SEND PACKET: %.2X %.2X %.2X %.2X %.2X %.2X %.2X %.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
+  SerialBT.printf("SEND: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
+  }
 }
 
 
@@ -317,20 +334,29 @@ void check_pwr_bts() {
     return;
   }
 
-  if(power_bt == LOW) // кнопка питания нажата
+  if(power_bt == LOW) { // кнопка питания нажата
     
     if(!pwr_bt) { // кнопку питания только нажали 
         pwr_bt = true;
-        pwr_bt_time = millis() + PWR_TIMEOUT;
-    } else { // кнопка питания уже была нажата
-      if(millis() > pwr_bt_time) Power_Off = true; // прошло 2 секунды для выключения ?
-    } else {
-      if(pwr_bt) pwr_bt = false;
+        pwr_bt_time = millis();
+    } else // кнопка питания уже была нажата
+      if(millis() > (pwr_bt_time  + PWR_TIMEOUT)) Power_Off = true; // прошло 2 секунды для выключения ?
+
+    return;
+  }
+
+  if(pwr_bt) {
+    pwr_bt = false;
+
+    if(millis() > (pwr_bt_time+50)) {
+      r_packet[2]++;
+      if(r_packet[2] > 3) r_packet[2] = 0;
+//    if(++r_packet[2] > 3) r_packet[2] = 0;
     }
-  
+  }
 }
 
-
+/*
 void check_serial() {
   if (Serial.available()) {
     cmdByte = Serial.read();
@@ -340,22 +366,27 @@ void check_serial() {
     if(cmdByte == 'a' || cmdByte == 'A') Serial.printf("ACC: %d\n",readACC());
     if(cmdByte == 'r' || cmdByte == 'R') Serial.printf("REG: %d\n",readREG());
     
+    if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
+    if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
+    if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
+
     if(cmdByte == 's' || cmdByte == 'S') Serial.printf("SPEED: %d\n",r_packet[2]);
 
   }
   
 }
-
+*/
 
 void check_BTserial() {
   if (SerialBT.available()) {
     cmdByte = SerialBT.read();
-    SerialBT.printf("\nGot: %.2X\n",cmdByte);
+//    SerialBT.printf("\nGot: %.2X\n",cmdByte);
 
     if(cmdByte == 'v' || cmdByte == 'V') SerialBT.printf("Version: %.2f\n",PROG_VER);
     if(cmdByte == 'a' || cmdByte == 'A') SerialBT.printf("ACC: %d\n",readACC());
     if(cmdByte == 'r' || cmdByte == 'R') SerialBT.printf("REG: %d\n",readREG());
-    
+
+    if(cmdByte == '0') r_packet[2] = 0x00;  // переключаем скорость на 0 (не документированная)
     if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
     if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
     if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
@@ -418,53 +449,52 @@ void printPacketInfo(byte p_ver) {
 
   }
   if(!Power_On) {
+    readBAT();
     displayUpInfo(r_packet[5],p_ver,r_packet[4]);
     displaySpeed(mySpeed);
     displayDownInfo(r_packet[2],bat_current);
   }
 }
 
-void check_battery(){
-  uint16_t bat_val, sensorValue = 0;
+void readBAT(){
+  uint16_t sensorValue = 0;
   
-  for(byte i=0; i<10; i++) sensorValue += (analogRead(BAT_PIN) + volt_correct);
+  for(byte i=0; i<10; i++) sensorValue += (analogRead(BAT_PIN));
     
-  sensorValue = (sensorValue/10);
+  sensorValue = (sensorValue/10) + volt_correct;
 
   if(sensorValue > MAX_SENSOR_VALUE) sensorValue = MAX_SENSOR_VALUE; // 4095 TODO: обработку ошибки
-
-//  sensorValue = sensorValue * 2; 
 
   battery_fvol = sensorValue / 6;
   battery_fvol = battery_fvol / (float)10;
 
 //  bat_val = map(sensorValue, 0, MAX_SENSOR_VALUE, 0, 33);
-//  battery_fvol = bat_val * 20; // коррекция резистивного делителя
-//  battery_fvol = battery_fvol/10;
-  
-//  acc_vol = map(sensorValue, min_acc_value, max_acc_value, 0, max_speed);
+
   
 }
 
 byte readACC() {
+  uint32_t sensorValue = 0;
+  byte acc_vol = 0;
 
   max_speed = start_packet[r_packet[2] + 6] * 2;
   // read the input on analog pin ACC_PIN
 //  sensorValue = 0;
-  pinValue = 0;
-  for(byte i=0; i<100; i++) pinValue += analogRead(ACC_PIN);
+//  pinValue = 0;
+  for(byte i=0; i<100; i++) sensorValue += analogRead(ACC_PIN);
     
-  sensorValue = (pinValue/100);
+  sensorValue = (sensorValue/100);
 
   if(sensorValue < min_acc_value) sensorValue = min_acc_value; // 800
   if(sensorValue > max_acc_value) { 
     if(sensorValue < HALL_MAX) max_acc_value = sensorValue;
+    else { sensorValue = min_acc_value; } // TODO: обработку ошибки датчика холла
   }
   
 
 //  acc_vol = map(sensorValue, 800, 3070, 0, 205);
   acc_vol = map(sensorValue, min_acc_value, max_acc_value, 0, max_speed);
-  if(acc_vol < 10) acc_vol = 0;
+  if(acc_vol < start_acc_vol) acc_vol = 0;
 
   //voltage = (sensorValue/100) * (3.3 / 4095.0);
 
@@ -472,20 +502,23 @@ byte readACC() {
 }
 
 byte readREG() {
+  uint32_t sensorValue = 0;
+  byte reg_vol = 0;
   
   // read the input on analog pin REG_PIN
-  pinValue = 0;
-  for(byte i=0; i<20; i++) pinValue += analogRead(REG_PIN);
+  //pinValue = 0;
+  for(byte i=0; i<20; i++) sensorValue += analogRead(REG_PIN);
     
-  sensorValue = (pinValue/20);
+  sensorValue = (sensorValue/20);
 
     
   if(sensorValue < min_reg_value) sensorValue = min_reg_value;
   if(sensorValue > max_reg_value) {
     if(sensorValue < HALL_MAX) max_reg_value = sensorValue;
+    else { sensorValue = min_reg_value; } // TODO: обработку ошибки датчика холла
   }
   reg_vol = map(sensorValue, min_reg_value, max_reg_value, 0, 205);
-  if(reg_vol < 10) reg_vol = 0;
+  if(reg_vol < start_reg_vol) reg_vol = 0;
 
   return reg_vol;
 }
@@ -520,9 +553,6 @@ void displayUpInfo(byte reg_v, byte p_ver, byte acc_v) {
   display.drawString(128, 0, String(acc_v));
   if(acc_v) display.fillRect(124, 64 - (acc_v/4), 128, 64);
 
-//  display.drawVerticalLine(126, 64 - (acc_v/4), 64);
-//  display.drawVerticalLine(127, 64 - (acc_v/4), 64);
-//  display.drawVerticalLine(128, 64 - (acc_v/4), 64);
   
   display.display();
 }
@@ -576,4 +606,3 @@ void displayACC() {
 //  run_loop = false;
 }
 */
-
