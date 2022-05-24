@@ -20,7 +20,7 @@
 #define BAT_PIN 36    // Пин подключения резистивного делителя напряжения (200к/10к) АКБ
 #define POWER_PIN 23  // Пин на блок питания (поддержка после отпуская конопки питания)
 #define POWER_BT 19   // Пин подключения кнопки питания (через диод)
-#define SPEED_BT 18   // Пин подключения кнопки скорости (нажата LOW)
+#define MODE_BT 18    // Пин подключения кнопки MODE (нажата LOW)
 #define WHEEL_D 7.8
 #define MY_NAME "ESP32dsp"
 #define PROTO_ERR 1
@@ -29,6 +29,7 @@
 
 #define PROG_VER 0.19
 
+const uint8_t VReads = 15;
 
 //bool start_p = false;
 byte byte_p = 0;
@@ -56,7 +57,7 @@ uint16_t max_reg_value = 3080;
 byte start_acc_vol = 10;
 byte start_reg_vol = 10;
 
-int16_t volt_correct = 220;
+int16_t volt_correct = 150;
 byte battery_min = 29;
 
 byte max_speed;
@@ -70,7 +71,7 @@ boolean mk_ok = false;
 boolean pwr_bt = false;
 boolean Power_Off = false;
 boolean Power_On = true;
-boolean short_press = false;
+//boolean short_press = false;
 
 uint8_t power_bt = HIGH;
 
@@ -92,7 +93,7 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(POWER_PIN, OUTPUT);
   pinMode(POWER_BT, INPUT_PULLUP);
-  pinMode(SPEED_BT, INPUT_PULLUP);
+  pinMode(MODE_BT, INPUT_PULLUP);
   pinMode(BAT_PIN, INPUT);
   pinMode(ACC_PIN, INPUT);
   pinMode(REG_PIN, INPUT);
@@ -151,13 +152,13 @@ void setup() {
 */
   
   mySerial.begin(9600,SERIAL_8N1, RX_PIN, TX_PIN);
-  Serial.println("Port 9600 8N1 RX pin 16 TX pin 17");
+//  Serial.println("Port 9600 8N1 RX pin 16 TX pin 17");
 //  SerialBT.println("Port 9600 8N1 RX pin 16 TX pin 17");
 
   hallValue = analogRead(ACC_PIN);
 
   if(hallValue < HALL_MIN || hallValue > HALL_MAX) {
-      Serial.printf("Значение акселератора: %d\n", hallValue);
+//      Serial.printf("Значение акселератора: %d\n", hallValue);
 //      Serial.println("Требуется калибровка!!!");
       SerialBT.printf("ERR ACC: %d\n", hallValue);
       is_error = true;
@@ -167,7 +168,7 @@ void setup() {
   hallValue = analogRead(REG_PIN);
 
   if(hallValue < HALL_MIN || hallValue > HALL_MAX) {
-      Serial.printf("Значение тормоза: %d\n", hallValue);
+//      Serial.printf("Значение тормоза: %d\n", hallValue);
 //      Serial.println("Требуется калибровка!!!");
       SerialBT.printf("ERR REG: %d\n", hallValue);
 //      is_error = true;
@@ -280,9 +281,9 @@ void sendPacket(byte p_ver) {
 }
 
 void protoError() {
-  Serial.println();
+//  Serial.println();
 //  SerialBT.println();
-  Serial.println("Protocol unknown!!!");
+//  Serial.println("Protocol unknown!!!");
   SerialBT.println("PROTO ERR");
   Err_N = PROTO_ERR;
   displayError();
@@ -293,33 +294,33 @@ void printPacket() {
 
   digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   
-  Serial.println();
+//  Serial.println();
 //  SerialBT.println();
-  Serial.print("RECV PACKET: ");
+//  Serial.print("RECV PACKET: ");
   SerialBT.println("RECV: ");
   
   for ( byte i=0; i<=byte_p-1; i++) {  // printf(tmp, "0x%.2X",data[i]);
-    Serial.printf("%.2X ",packet[i]);
+//    Serial.printf("%.2X ",packet[i]);
     SerialBT.printf("%.2X",packet[i]);
   }
 
   if(checkCRC(uart_protocol)) {
-    Serial.println("CRC OK");
+//    Serial.println("CRC OK");
     SerialBT.println(" OK");
     if(is_error) displayError(); 
       else printPacketInfo(uart_protocol);
   }
   else { 
-    Serial.println("CRC BAD!");
+//    Serial.println("CRC BAD!");
     SerialBT.println(" !CRC");
   }
 
   if(conf_packet) {
-    SerialBT.printf("SEND: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
+    SerialBT.printf("SEND2: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
     conf_packet = false;
   } else {
-  Serial.printf("SEND PACKET: %.2X %.2X %.2X %.2X %.2X %.2X %.2X %.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
-  SerialBT.printf("SEND: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
+//  Serial.printf("SEND PACKET: %.2X %.2X %.2X %.2X %.2X %.2X %.2X %.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
+  SerialBT.printf("SEND1: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
   }
 }
 
@@ -350,9 +351,9 @@ void check_pwr_bts() {
     pwr_bt = false;
 
     if(millis() > (pwr_bt_time+50)) {
-      r_packet[2]++;
-      if(r_packet[2] > 3) r_packet[2] = 0;
-//    if(++r_packet[2] > 3) r_packet[2] = 0;
+//      r_packet[2]++;
+//      if(r_packet[2] > 3) r_packet[2] = 0;
+      if(++r_packet[2] > 3) r_packet[2] = 0;
     }
   }
 }
@@ -457,8 +458,9 @@ void printPacketInfo(byte p_ver) {
   }
 }
 
+/*
 void readBAT(){
-  uint16_t sensorValue = 0;
+  uint32_t sensorValue = 0;
   
   for(byte i=0; i<10; i++) sensorValue += (analogRead(BAT_PIN));
     
@@ -466,11 +468,27 @@ void readBAT(){
 
   if(sensorValue > MAX_SENSOR_VALUE) sensorValue = MAX_SENSOR_VALUE; // 4095 TODO: обработку ошибки
   
-  battery_fvol = ((float)(sensorValue/(MAX_SENSOR_VALUE + 1)) * 3600) / 1000;
-//  battery_fvol = sensorValue / 6;
-//  battery_fvol = battery_fvol / (float)10;
+  battery_fvol = sensorValue / 6;
+  battery_fvol = battery_fvol / (float)10;
  
 }
+*/
+
+void readBAT() {
+  float voltageBuffer[VReads];
+  uint32_t Read_buffer = 0;
+  const uint16_t max_sensor = MAX_SENSOR_VALUE + 1;
+  
+  for (byte x = 0; x < VReads; x++) {
+    for (byte i = 0 ; i < VReads; i++) {
+      voltageBuffer[i] = (uint32_t)analogRead(BAT_PIN);
+    }
+    sortData(voltageBuffer, VReads);
+    Read_buffer += (voltageBuffer[(VReads - 1) / 2]);
+  }
+  battery_fvol = (((float)(Read_buffer / VReads) / max_sensor) * 3600 * 2 + volt_correct) / 100;
+}
+
 
 byte readACC() {
   uint32_t sensorValue = 0;
@@ -594,6 +612,23 @@ void displayPowerOff() {
   display.drawString(64, 40, "OFF");
   display.display();
 }
+
+void sortData(float *mass, uint16_t count)
+{
+  for (uint16_t number_1 = 0; number_1 < count; number_1++)
+  {
+    for (uint16_t number_2 = 0; number_2 < count; number_2++)
+    {
+      if (mass[number_2] < mass[number_2 + 1])
+      {
+        float temp = mass[number_2];
+        mass[number_2] = mass[number_2 + 1];
+        mass[number_2 + 1] = temp;
+      }
+    }
+  }
+}
+
 
 /*
 void displayACC() {
