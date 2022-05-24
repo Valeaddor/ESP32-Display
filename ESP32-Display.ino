@@ -27,7 +27,7 @@
 #define ACC_REG_ERR 5
 #define MAX_SENSOR_VALUE 4095
 
-#define PROG_VER 0.18
+#define PROG_VER 0.19
 
 
 //bool start_p = false;
@@ -48,6 +48,7 @@ float battery_fvol = 0;
 char myBTName[22] = {0};
 byte Err_N = 0;
 
+float wheel_d = WHEEL_D;
 uint16_t min_acc_value = 800;
 uint16_t max_acc_value = 3080;
 uint16_t min_reg_value = 800;
@@ -424,7 +425,7 @@ void printPacketInfo(byte p_ver) {
 
   if(p_ver == 1) {
     mk_speed = ((packet[5]<<8)+packet[6]);
-    mySpeed = ((((1000/mk_speed)*60) * ((WHEEL_D*3.14)/39)) * 60) / 1000;
+    mySpeed = ((((1000/mk_speed)*60) * ((wheel_d*3.14)/39)) * 60) / 1000;
     bat_current = packet[4];
     if(packet[2] == 0) Serial.println("Двигатель блокирован"); 
       else if(packet[2] == 1) Serial.println("Нормальная работа"); 
@@ -438,7 +439,7 @@ void printPacketInfo(byte p_ver) {
 
   } else if (p_ver == 2) {
     mk_speed = (packet[5]<<8)+packet[6];
-    mySpeed = ((((1000/mk_speed)*60) * ((WHEEL_D*3.14)/39)) * 60) / 1000;
+    mySpeed = ((((1000/mk_speed)*60) * ((wheel_d*3.14)/39)) * 60) / 1000;
     bat_current = (packet[3]<<8)+packet[4];
     if(packet[1] & (1 << 0)) Serial.println("Ошибка двигателя (M)");
     if(packet[1] & (1 << 1)) Serial.println("Круиз контроль ON");
@@ -464,13 +465,11 @@ void readBAT(){
   sensorValue = (sensorValue/10) + volt_correct;
 
   if(sensorValue > MAX_SENSOR_VALUE) sensorValue = MAX_SENSOR_VALUE; // 4095 TODO: обработку ошибки
-
-  battery_fvol = sensorValue / 6;
-  battery_fvol = battery_fvol / (float)10;
-
-//  bat_val = map(sensorValue, 0, MAX_SENSOR_VALUE, 0, 33);
-
   
+  battery_fvol = ((float)(sensorValue/(MAX_SENSOR_VALUE + 1)) * 3600) / 1000;
+//  battery_fvol = sensorValue / 6;
+//  battery_fvol = battery_fvol / (float)10;
+ 
 }
 
 byte readACC() {
