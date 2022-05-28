@@ -1,9 +1,23 @@
 #include <HardwareSerial.h>
-#include "BluetoothSerial.h"
 #include "myfont.h"
+
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
 
 #include "SSD1306Wire.h"        // legacy: #include "SSD1306.h"
 // OR #include "SH1106Wire.h"   // legacy: #include "SH1106.h"
+
+
+// See the following for generating UUIDs:
+// https://www.uuidgenerator.net/
+
+#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
+#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
 
 #define RX_PIN 16
 #define TX_PIN 17
@@ -22,12 +36,14 @@
 #define POWER_BT 19   // Пин подключения кнопки питания (через диод)
 #define MODE_BT 18    // Пин подключения кнопки MODE (нажата LOW)
 #define WHEEL_D 7.8
-#define MY_NAME "ESP32dsp"
+//#define MY_NAME "ESP32dsp"
+#define MY_BLE_NAME "ESP32BLE"
 #define PROTO_ERR 1
 #define ACC_REG_ERR 5
 #define MAX_SENSOR_VALUE 4095
 
-#define PROG_VER 0.19
+#define PROG_VER 0.20
+
 
 const uint8_t VReads = 15;
 
@@ -46,7 +62,8 @@ unsigned long pwr_bt_time;
 
 int16_t bat_current;
 float battery_fvol = 0;
-char myBTName[22] = {0};
+//char myBTName[22] = {0};
+char myBLEName[26] = {0};
 byte Err_N = 0;
 
 float wheel_d = WHEEL_D;
@@ -75,15 +92,63 @@ boolean Power_On = true;
 
 uint8_t power_bt = HIGH;
 
-// boolean run_loop = true;
+
+BLEServer *pServer = NULL;
+BLECharacteristic * pTxCharacteristic;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+std::string rxValue;
+
 
 HardwareSerial mySerial(2);
-BluetoothSerial SerialBT;
+//BluetoothSerial SerialBT;
 
 // Initialize the OLED display using Arduino Wire:
 SSD1306Wire display(0x3c, SDA, SCL);
 // ADDRESS, SDA, SCL  -  SDA and SCL usually populate automatically based on your board's pins_arduino.h e.g. https://github.com/esp8266/Arduino/blob/master/variants/nodemcu/pins_arduino.h
 
+
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+    }
+};
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      rxValue = pCharacteristic->getValue();
+
+      if (rxValue.length() > 0) {
+
+        Serial.print("BLE: ");
+        for (uint16_t i = 0; i < rxValue.length(); i++)
+          Serial.print(rxValue[i]);
+
+        Serial.println();
+      }
+    }
+};
+
+//void BLEwrite(byte data_b) {
+//      if (deviceConnected) {
+//        pTxCharacteristic->setValue(&data_b, 1);
+//        pTxCharacteristic->notify();
+//    delay(10); // bluetooth stack will go into congestion, if too many packets are sent
+//  }
+//}
+
+void BLEprint(const char* s_data) {
+      if (deviceConnected) {
+        pTxCharacteristic->setValue((uint8_t *)s_data, strlen(s_data));
+        pTxCharacteristic->notify();
+//    delay(10); // bluetooth stack will go into congestion, if too many packets are sent
+  }
+
+}
 
 
 void setup() {
@@ -100,7 +165,7 @@ void setup() {
 
 
   esp_read_mac(BTmac, ESP_MAC_BT);
-  sprintf(myBTName, "%s%02X%02X%02X%02X%02X%02X", MY_NAME, BTmac[0], BTmac[1], BTmac[2], BTmac[3], BTmac[4], BTmac[5]);
+  sprintf(myBLEName, "%s%02X%02X%02X%02X%02X%02X", MY_BLE_NAME, BTmac[0], BTmac[1], BTmac[2], BTmac[3], BTmac[4], BTmac[5]);
 
   readBAT();
   if(battery_fvol > battery_min) digitalWrite(POWER_PIN,HIGH);
@@ -120,8 +185,8 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Start ...");
 
-  SerialBT.begin(myBTName); //Bluetooth device name
-  SerialBT.println("Start ...");
+//  SerialBT.begin(myBTName); //Bluetooth device name
+//  SerialBT.println("Start ...");
 
 
 //  Serial.println("Try to detect baudrate with inverted logic.");
@@ -150,7 +215,42 @@ void setup() {
        }
      }
 */
-  
+
+
+
+  // Create the BLE Device
+  BLEDevice::init(myBLEName);
+
+  // Create the BLE Server
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create the BLE Service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // Create a BLE Characteristic
+  pTxCharacteristic = pService->createCharacteristic(
+                    CHARACTERISTIC_UUID_TX,
+                    BLECharacteristic::PROPERTY_NOTIFY
+                  );
+                      
+  pTxCharacteristic->addDescriptor(new BLE2902());
+
+  BLECharacteristic * pRxCharacteristic = pService->createCharacteristic(
+                       CHARACTERISTIC_UUID_RX,
+                      BLECharacteristic::PROPERTY_WRITE
+                    );
+
+  pRxCharacteristic->setCallbacks(new MyCallbacks());
+
+  // Start the service
+  pService->start();
+
+  // Start advertising
+  pServer->getAdvertising()->start();
+
+
+
   mySerial.begin(9600,SERIAL_8N1, RX_PIN, TX_PIN);
 //  Serial.println("Port 9600 8N1 RX pin 16 TX pin 17");
 //  SerialBT.println("Port 9600 8N1 RX pin 16 TX pin 17");
@@ -160,7 +260,10 @@ void setup() {
   if(hallValue < HALL_MIN || hallValue > HALL_MAX) {
 //      Serial.printf("Значение акселератора: %d\n", hallValue);
 //      Serial.println("Требуется калибровка!!!");
-      SerialBT.printf("ERR ACC: %d\n", hallValue);
+      char s_message[15] = "";
+      sprintf(s_message, "ERR ACC: %d\n", hallValue);
+      BLEprint(s_message);
+//      SerialBT.printf("ERR ACC: %d\n", hallValue);
       is_error = true;
       Err_N = ACC_REG_ERR; // TODO:
   }
@@ -170,7 +273,11 @@ void setup() {
   if(hallValue < HALL_MIN || hallValue > HALL_MAX) {
 //      Serial.printf("Значение тормоза: %d\n", hallValue);
 //      Serial.println("Требуется калибровка!!!");
-      SerialBT.printf("ERR REG: %d\n", hallValue);
+      char s_message[15] = "";
+      sprintf(s_message, "ERR REG: %d\n", hallValue);
+      BLEprint(s_message);
+
+//      SerialBT.printf("ERR REG: %d\n", hallValue);
 //      is_error = true;
 //      Err_N = ACC_REG_ERR; // TODO:
   }
@@ -199,7 +306,7 @@ void loop() {
 
 //  check_serial();
 
-  check_BTserial();
+//  check_BTserial();
 
   check_pwr_bts();
 
@@ -284,44 +391,55 @@ void protoError() {
 //  Serial.println();
 //  SerialBT.println();
 //  Serial.println("Protocol unknown!!!");
-  SerialBT.println("PROTO ERR");
+  BLEprint("PROTO ERR\n");
+
+//  SerialBT.println("PROTO ERR");
   Err_N = PROTO_ERR;
   displayError();
   
 }
 
 void printPacket() {
+  char s_message[100] = "RECV: ";
 
   digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   
 //  Serial.println();
-//  SerialBT.println();
 //  Serial.print("RECV PACKET: ");
-  SerialBT.println("RECV: ");
+//  SerialBT.print("RECV: ");
   
   for ( byte i=0; i<=byte_p-1; i++) {  // printf(tmp, "0x%.2X",data[i]);
+    char hex_byte[3] = "";
 //    Serial.printf("%.2X ",packet[i]);
-    SerialBT.printf("%.2X",packet[i]);
+    sprintf(hex_byte,"%.2X",packet[i]);
+    strcat(s_message,hex_byte);
+//    SerialBT.printf("%.2X",packet[i]);
   }
 
   if(checkCRC(uart_protocol)) {
 //    Serial.println("CRC OK");
-    SerialBT.println(" OK");
+    strcat(s_message," OK\n\0");
+//    SerialBT.println(" OK");
     if(is_error) displayError(); 
       else printPacketInfo(uart_protocol);
   }
   else { 
 //    Serial.println("CRC BAD!");
-    SerialBT.println(" !CRC");
+//    SerialBT.println(" !CRC");
+    strcat(s_message," !CRC\n\0");
   }
+  BLEprint(s_message);
 
   if(conf_packet) {
-    SerialBT.printf("SEND2: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
+//    SerialBT.printf("SEND2: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
+    sprintf(s_message, "SEND2: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n\0", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
     conf_packet = false;
   } else {
 //  Serial.printf("SEND PACKET: %.2X %.2X %.2X %.2X %.2X %.2X %.2X %.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
-  SerialBT.printf("SEND1: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
+//  SerialBT.printf("SEND1: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
+  sprintf(s_message, "SEND1: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n\0", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
   }
+  BLEprint(s_message);
 }
 
 
@@ -379,6 +497,7 @@ void check_serial() {
 }
 */
 
+/*
 void check_BTserial() {
   if (SerialBT.available()) {
     cmdByte = SerialBT.read();
@@ -397,7 +516,7 @@ void check_BTserial() {
   }
   
 }
-
+*/
 
 
 boolean checkCRC(byte p_ver) {
