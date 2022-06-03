@@ -143,7 +143,8 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 
 void BLEprint(const char* s_data) {
       if (deviceConnected) {
-        pTxCharacteristic->setValue((uint8_t *)s_data, strlen(s_data));
+//        pTxCharacteristic->setValue((uint8_t *)s_data, strlen(s_data));
+        pTxCharacteristic->setValue(s_data);
         pTxCharacteristic->notify();
 //    delay(10); // bluetooth stack will go into congestion, if too many packets are sent
   }
