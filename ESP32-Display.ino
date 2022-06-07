@@ -36,13 +36,12 @@
 #define POWER_BT 19   // Пин подключения кнопки питания (через диод)
 #define MODE_BT 18    // Пин подключения кнопки MODE (нажата LOW)
 #define WHEEL_D 7.8
-//#define MY_NAME "ESP32dsp"
-#define MY_BLE_NAME "ESP32BLE"
+#define MY_BLE_NAME "ESP32ble"
 #define PROTO_ERR 1
 #define ACC_REG_ERR 5
 #define MAX_SENSOR_VALUE 4095
 
-#define PROG_VER 0.20
+#define PROG_VER 0.21
 
 
 const uint8_t VReads = 15;
@@ -58,7 +57,7 @@ byte start_packet[] = {0x3e, 0x2c, 0x0b, 0x00, 0x3c, 0x28, 0x1e, 0x32, 0x46, 0x6
 
 unsigned long loop_time;
 unsigned long pwr_bt_time;
-//unsigned long pwr_off_time;
+unsigned long ble_timer;
 
 int16_t bat_current;
 float battery_fvol = 0;
@@ -88,6 +87,7 @@ boolean mk_ok = false;
 boolean pwr_bt = false;
 boolean Power_Off = false;
 boolean Power_On = true;
+boolean ble_need_restart = false;
 //boolean short_press = false;
 
 uint8_t power_bt = HIGH;
@@ -301,15 +301,13 @@ void loop() {
 
   tik();
 
-//  check_battery();
-
   check_mySerial();
 
 //  check_serial();
 
-//  check_BTserial();
-
   check_pwr_bts();
+
+  check_BLE();
 
 }
 
@@ -390,11 +388,9 @@ void sendPacket(byte p_ver) {
 
 void protoError() {
 //  Serial.println();
-//  SerialBT.println();
 //  Serial.println("Protocol unknown!!!");
   BLEprint("PROTO ERR\n");
 
-//  SerialBT.println("PROTO ERR");
   Err_N = PROTO_ERR;
   displayError();
   
@@ -405,40 +401,34 @@ void printPacket() {
 
   digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   
-//  Serial.println();
-//  Serial.print("RECV PACKET: ");
-//  SerialBT.print("RECV: ");
-  
   for ( byte i=0; i<=byte_p-1; i++) {  // printf(tmp, "0x%.2X",data[i]);
     char hex_byte[3] = "";
 //    Serial.printf("%.2X ",packet[i]);
     sprintf(hex_byte,"%.2X",packet[i]);
     strcat(s_message,hex_byte);
-//    SerialBT.printf("%.2X",packet[i]);
   }
 
   if(checkCRC(uart_protocol)) {
 //    Serial.println("CRC OK");
     strcat(s_message," OK\n\0");
-//    SerialBT.println(" OK");
     if(is_error) displayError(); 
       else printPacketInfo(uart_protocol);
   }
   else { 
 //    Serial.println("CRC BAD!");
-//    SerialBT.println(" !CRC");
     strcat(s_message," !CRC\n\0");
   }
   BLEprint(s_message);
 
   if(conf_packet) {
-//    SerialBT.printf("SEND2: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
-    sprintf(s_message, "SEND2: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n\0", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
+
+    sprintf(s_message, "CONF: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n\0", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
     conf_packet = false;
+    
   } else {
 //  Serial.printf("SEND PACKET: %.2X %.2X %.2X %.2X %.2X %.2X %.2X %.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
-//  SerialBT.printf("SEND1: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
-  sprintf(s_message, "SEND1: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n\0", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
+
+  sprintf(s_message, "SEND: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n\0", r_packet[0], r_packet[1], r_packet[2], r_packet[3], r_packet[4], r_packet[5], r_packet[6], r_packet[7]);
   }
   BLEprint(s_message);
 }
@@ -470,54 +460,43 @@ void check_pwr_bts() {
     pwr_bt = false;
 
     if(millis() > (pwr_bt_time+50)) {
-//      r_packet[2]++;
-//      if(r_packet[2] > 3) r_packet[2] = 0;
       if(++r_packet[2] > 3) r_packet[2] = 0;
     }
   }
 }
 
-/*
-void check_serial() {
-  if (Serial.available()) {
-    cmdByte = Serial.read();
-    Serial.printf("\nGot: %.2X\n",cmdByte);
+void check_BLE() {
 
-    if(cmdByte == 'v' || cmdByte == 'V') Serial.printf("Version: %.2f\n",PROG_VER);
-    if(cmdByte == 'a' || cmdByte == 'A') Serial.printf("ACC: %d\n",readACC());
-    if(cmdByte == 'r' || cmdByte == 'R') Serial.printf("REG: %d\n",readREG());
-    
-    if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
-    if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
-    if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
+    // disconnecting
+    if (!deviceConnected && oldDeviceConnected) {
 
-    if(cmdByte == 's' || cmdByte == 'S') Serial.printf("SPEED: %d\n",r_packet[2]);
+        ble_timer = millis() + 500;
+        ble_need_restart = true;
+        oldDeviceConnected = deviceConnected;
 
-  }
-  
+    } else
+    // connecting
+    if (deviceConnected && !oldDeviceConnected) {
+
+        oldDeviceConnected = deviceConnected;
+        configurationSend();
+
+    } else 
+
+    if(ble_need_restart && (millis() > ble_timer)) {
+        pServer->startAdvertising(); // restart advertising
+        ble_need_restart = false;
+    }
+
 }
-*/
 
-/*
-void check_BTserial() {
-  if (SerialBT.available()) {
-    cmdByte = SerialBT.read();
-//    SerialBT.printf("\nGot: %.2X\n",cmdByte);
-
-    if(cmdByte == 'v' || cmdByte == 'V') SerialBT.printf("Version: %.2f\n",PROG_VER);
-    if(cmdByte == 'a' || cmdByte == 'A') SerialBT.printf("ACC: %d\n",readACC());
-    if(cmdByte == 'r' || cmdByte == 'R') SerialBT.printf("REG: %d\n",readREG());
-
-    if(cmdByte == '0') r_packet[2] = 0x00;  // переключаем скорость на 0 (не документированная)
-    if(cmdByte == '1') r_packet[2] = 0x01;  // переключаем скорость на 1
-    if(cmdByte == '2') r_packet[2] = 0x02;  // переключаем скорость на 2
-    if(cmdByte == '3') r_packet[2] = 0x03;  // переключаем скорость на 3
-    
-    if(cmdByte == 's' || cmdByte == 'S') SerialBT.printf("SPEED: %d\n",r_packet[2]);
-  }
+void configurationSend() {
+  char s_message[100] = "";
   
+  sprintf(s_message, "CONF: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n\0", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
+  BLEprint(s_message);
+
 }
-*/
 
 
 boolean checkCRC(byte p_ver) {
@@ -615,9 +594,7 @@ byte readACC() {
   byte acc_vol = 0;
 
   max_speed = start_packet[r_packet[2] + 6] * 2;
-  // read the input on analog pin ACC_PIN
-//  sensorValue = 0;
-//  pinValue = 0;
+
   for(byte i=0; i<100; i++) sensorValue += analogRead(ACC_PIN);
     
   sensorValue = (sensorValue/100);
@@ -642,8 +619,6 @@ byte readREG() {
   uint32_t sensorValue = 0;
   byte reg_vol = 0;
   
-  // read the input on analog pin REG_PIN
-  //pinValue = 0;
   for(byte i=0; i<20; i++) sensorValue += analogRead(REG_PIN);
     
   sensorValue = (sensorValue/20);
@@ -748,6 +723,24 @@ void sortData(float *mass, uint16_t count)
     }
   }
 }
+
+
+/*
+void check_serial() {
+  if (Serial.available()) {
+    cmdByte = Serial.read();
+    Serial.printf("\nGot: %.2X\n",cmdByte);
+
+    if(cmdByte == 'v' || cmdByte == 'V') Serial.printf("Version: %.2f\n",PROG_VER);
+    if(cmdByte == 'a' || cmdByte == 'A') Serial.printf("ACC: %d\n",readACC());
+    if(cmdByte == 'r' || cmdByte == 'R') Serial.printf("REG: %d\n",readREG());
+    
+    if(cmdByte == 's' || cmdByte == 'S') Serial.printf("SPEED: %d\n",r_packet[2]);
+
+  }
+  
+}
+*/
 
 
 /*
