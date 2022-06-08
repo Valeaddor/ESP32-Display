@@ -41,7 +41,7 @@
 #define ACC_REG_ERR 5
 #define MAX_SENSOR_VALUE 4095
 
-#define PROG_VER 0.21
+#define PROG_VER 0.22
 
 
 const uint8_t VReads = 15;
@@ -88,7 +88,7 @@ boolean pwr_bt = false;
 boolean Power_Off = false;
 boolean Power_On = true;
 boolean ble_need_restart = false;
-//boolean short_press = false;
+boolean ble_need_send_conf = false;
 
 uint8_t power_bt = HIGH;
 
@@ -97,7 +97,7 @@ BLEServer *pServer = NULL;
 BLECharacteristic * pTxCharacteristic;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
-std::string rxValue;
+//std::string rxValue;
 
 
 HardwareSerial mySerial(2);
@@ -120,15 +120,18 @@ class MyServerCallbacks: public BLEServerCallbacks {
 
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
-      rxValue = pCharacteristic->getValue();
+      std::string rxValue = pCharacteristic->getValue();
 
       if (rxValue.length() > 0) {
 
-        Serial.print("BLE: ");
-        for (uint16_t i = 0; i < rxValue.length(); i++)
-          Serial.print(rxValue[i]);
+//        Serial.print("BLE: ");
+//        for (uint16_t i = 0; i < rxValue.length(); i++)
+//          Serial.print(rxValue[i]);
+        if(strncmp(rxValue.c_str(),"ATCONF?",7) == 0) {
+          ble_need_send_conf = true;
+        }
 
-        Serial.println();
+//        Serial.println();
       }
     }
 };
@@ -420,6 +423,11 @@ void printPacket() {
   }
   BLEprint(s_message);
 
+  if(ble_need_send_conf) {
+    conf_packet = ble_need_send_conf;
+    ble_need_send_conf = false;
+  }
+
   if(conf_packet) {
 
     sprintf(s_message, "CONF: %.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X%.2X\n\0", start_packet[0], start_packet[1], start_packet[2], start_packet[3], start_packet[4], start_packet[5], start_packet[6], start_packet[7], start_packet[8], start_packet[9], start_packet[10], start_packet[11], start_packet[12], start_packet[13]);
@@ -479,7 +487,8 @@ void check_BLE() {
     if (deviceConnected && !oldDeviceConnected) {
 
         oldDeviceConnected = deviceConnected;
-        configurationSend();
+        ble_need_send_conf = true;
+//        configurationSend();
 
     } else 
 
@@ -490,6 +499,7 @@ void check_BLE() {
 
 }
 
+/*
 void configurationSend() {
   char s_message[100] = "";
   
@@ -497,7 +507,7 @@ void configurationSend() {
   BLEprint(s_message);
 
 }
-
+*/
 
 boolean checkCRC(byte p_ver) {
 
